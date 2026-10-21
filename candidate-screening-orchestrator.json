@@ -1,0 +1,787 @@
+{
+  "name": "Candidate Screening Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "candidate-screening",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        -16
+      ],
+      "id": "b97af19c-70d3-4644-b4be-118968ebea08",
+      "name": "Webhook",
+      "webhookId": "8be0206e-e5f1-4e89-a993-484da13b8cb0"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Candidate details:\n{{ JSON.stringify($json.body) }}\n\nClassify this candidate and return the JSON.",
+        "options": {
+          "systemMessage": "You are a recruitment supervisor. Route each candidate to exactly one department based on the job title:\n- \"technical\": engineering, development, data, IT, automation, or DevOps roles\n- \"sales\": sales, business development, account management, or marketing roles\n- \"general\": any other role\n\nRules:\n- Use only the information provided. Do not invent details.\n- Return only valid JSON in this exact format, with no extra text and no markdown:\n{\"route\": \"technical\" | \"sales\" | \"general\", \"reason\": \"one short line explaining why\"}"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        224,
+        -16
+      ],
+      "id": "e8e201af-ed02-402d-906b-6fbfbc2001b0",
+      "name": "Supervisor Agent"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        304,
+        224
+      ],
+      "id": "aafbbeea-4fc6-4048-9d86-f40c62118a6d",
+      "name": "Supervisor Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "HrOIZ7je9iVQ9F2r",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json.output.replace(/```json|```/g, '').trim();\nconst parsed = JSON.parse(raw);\nconst candidate = $('Webhook').first().json.body;\n\nreturn [{ json: { ...candidate, route: parsed.route, reason: parsed.reason } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        576,
+        -16
+      ],
+      "id": "d4e621a1-04ff-477a-a2ef-d609fb6967e4",
+      "name": "Parse Route"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "technical",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "ab139d8a-6a23-429e-97ea-fe2a3c8ff49b"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Technical"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "dca711e9-171e-4e93-ac21-0e0ed154507e",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "sales",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Sales"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "222450c4-3551-4e83-8577-2bc4afe1d59d",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "general",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "General"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        800,
+        -32
+      ],
+      "id": "9fb89cb8-35ca-46ea-bc12-c4de7797e0ab",
+      "name": "Route Candidate"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Job title: {{ $json.job_title }}\nDepartment: {{ $json.route }}\nResume:\n{{ $json.resume_text }}\n\nEvaluate this candidate and return the JSON.",
+        "options": {
+          "systemMessage": "You are a recruitment skill-match evaluator. Compare the candidate's resume against the job title and the department (route).\nScore the match from 0 to 100:\n- 80-100: strong match, most core skills clearly shown\n- 60-79: partial match, some relevant skills but gaps\n- 0-59: weak match, few or no relevant skills\n\nRules:\n- Use only the information in the resume. Do not assume skills that are not written.\n- Keep the reason to one short line, mentioning the strongest match or the main gap.\n- Return only valid JSON in this exact format, with no extra text and no markdown:\n{\"score\": 0, \"reason\": \"one short line\"}"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1024,
+        -16
+      ],
+      "id": "99449023-ecf0-4ee8-bef3-e1f7317452c4",
+      "name": "Skill Match Agent"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        1104,
+        224
+      ],
+      "id": "b0bdfa77-8b94-496b-b5db-83fe51a8a255",
+      "name": "Skill Match Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "HrOIZ7je9iVQ9F2r",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json.output.replace(/```json|```/g, '').trim();\nconst parsed = JSON.parse(raw);\nconst candidate = $('Parse Route').first().json;\n\nreturn [{\n  json: {\n    ...candidate,\n    match_score: Number(parsed.score),\n    match_reason: parsed.reason\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1376,
+        -16
+      ],
+      "id": "c237a76d-d7d0-437d-b3f6-d044590c6824",
+      "name": "Parse Match Score"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "22658e8b-3b8c-4b73-b0c1-33792d936e03",
+              "leftValue": "={{ $json.match_score }}",
+              "rightValue": 70,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1600,
+        -16
+      ],
+      "id": "73facbd8-42f4-43a5-b19f-130e57031d4f",
+      "name": "Check Score"
+    },
+    {
+      "parameters": {
+        "tableId": "candidates",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "name",
+              "fieldValue": "={{ $('Parse Match Score').item.json.name }}"
+            },
+            {
+              "fieldId": "email",
+              "fieldValue": "={{ $('Parse Match Score').item.json.email }}"
+            },
+            {
+              "fieldId": "job_title",
+              "fieldValue": "={{ $('Parse Match Score').item.json.job_title }}"
+            },
+            {
+              "fieldId": "route",
+              "fieldValue": "={{ $('Parse Match Score').item.json.route }}"
+            },
+            {
+              "fieldId": "match_score",
+              "fieldValue": "={{ $('Parse Match Score').item.json.match_score }}"
+            },
+            {
+              "fieldId": "match_reason",
+              "fieldValue": "={{ $('Parse Match Score').item.json.match_reason }}"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "REJECTED"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1824,
+        80
+      ],
+      "id": "620f8f4b-85cd-4c62-9278-2846b51b9506",
+      "name": "Save Rejected Candidate",
+      "credentials": {
+        "supabaseApi": {
+          "id": "6r7hjjJWwhuvSsoI",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"rejected\",\n  \"message\": \"Candidate did not meet the minimum match score\",\n  \"match_score\": \"{{ $('Parse Match Score').item.json.match_score }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2048,
+        80
+      ],
+      "id": "94e0215e-447b-46df-bf3c-5f8f391aadc7",
+      "name": "Rejected Response"
+    },
+    {
+      "parameters": {
+        "tableId": "candidates",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "name",
+              "fieldValue": "={{ $('Parse Match Score').item.json.name }}"
+            },
+            {
+              "fieldId": "email",
+              "fieldValue": "={{ $('Parse Match Score').item.json.email }}"
+            },
+            {
+              "fieldId": "job_title",
+              "fieldValue": "={{ $('Parse Match Score').item.json.job_title }}"
+            },
+            {
+              "fieldId": "route",
+              "fieldValue": "={{ $('Parse Match Score').item.json.route }}"
+            },
+            {
+              "fieldId": "match_score",
+              "fieldValue": "={{ $('Parse Match Score').item.json.match_score }}"
+            },
+            {
+              "fieldId": "match_reason",
+              "fieldValue": "={{ $('Parse Match Score').item.json.match_reason }}"
+            },
+            {
+              "fieldId": "status",
+              "fieldValue": "SHORTLIST_PENDING"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1824,
+        -112
+      ],
+      "id": "38958274-a7ff-45f2-86cc-8c0ff3a2f452",
+      "name": "Save Pending Candidate",
+      "credentials": {
+        "supabaseApi": {
+          "id": "6r7hjjJWwhuvSsoI",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "6e0a91be-2b86-4a60-aae2-fa178e010e5a",
+              "leftValue": "={{ $json.data.approved }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2272,
+        -112
+      ],
+      "id": "8f722a2c-ac98-4225-a677-f7c0a4dd7988",
+      "name": "Check Decision"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Parse Match Score').item.json.email }}",
+        "subject": "=Interview invitation: {{ $('Parse Match Score').item.json.job_title }}",
+        "emailType": "text",
+        "message": "=Hi {{ $('Parse Match Score').item.json.name }}, \n\nThank you for applying. We are pleased to invite you to an interview for the {{ $('Parse Match Score').item.json.job_title }} position.  \n\nPlease reply to this email with a few time slots that work for you, and we will confirm the interview. \n\nBest regards,\nRecruitment Team",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        2496,
+        -208
+      ],
+      "id": "6e44ad05-e781-4601-ad9a-7b92cbfc8783",
+      "name": "Send Interview Email",
+      "webhookId": "a7632278-1640-4f01-87d5-26bd063344b2",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "D5RnP12Tu486Lr6x",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "candidates",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Save Pending Candidate').item.json.id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "INTERVIEW_INVITED"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2720,
+        -208
+      ],
+      "id": "e1210ee0-77af-4022-aa48-c10ef57cf5ca",
+      "name": "Mark Interview Invited",
+      "credentials": {
+        "supabaseApi": {
+          "id": "6r7hjjJWwhuvSsoI",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "candidates",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Save Pending Candidate').item.json.id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "NOT_SELECTED"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2496,
+        -16
+      ],
+      "id": "ea01b0e0-b136-487a-b5a0-4b56e4f33043",
+      "name": "Mark Not Selected",
+      "credentials": {
+        "supabaseApi": {
+          "id": "6r7hjjJWwhuvSsoI",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "   {\n     \"status\": \"approved\",\n     \"message\": \"Candidate approved and interview invitation sent\"\n   }",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2944,
+        -208
+      ],
+      "id": "b8ba3cd3-d172-4fdf-8438-1cf5edcecb37",
+      "name": "Approved Response"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "   {\n     \"status\": \"not_selected\",\n     \"message\": \"Candidate was not approved for an interview\"\n   }",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2720,
+        -16
+      ],
+      "id": "371549e3-0a20-477c-867e-060537ab2837",
+      "name": "Not Selected Response"
+    },
+    {
+      "parameters": {
+        "operation": "sendAndWait",
+        "chatId": "YOUR_CHAT_ID",
+        "message": "=New shortlist candidate needs approval.\nName: {{ $('Parse Match Score').item.json.name }}\nJob Title: {{ $('Parse Match Score').item.json.job_title.replace(/_/g, ' ') }}\nMatch Score: {{ $('Parse Match Score').item.json.match_score }}\nReason: {{ $('Parse Match Score').item.json.match_reason.replace(/_/g, ' ') }}\nDo you approve this candidate for an interview?",
+        "approvalOptions": {
+          "values": {
+            "approvalType": "double"
+          }
+        },
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2048,
+        -112
+      ],
+      "id": "38d1c4ea-0b77-4c73-afb1-e06a562cb101",
+      "name": "Request Approval",
+      "webhookId": "971a43c1-a82e-4726-9b70-ae21408d8c44",
+      "credentials": {
+        "telegramApi": {
+          "id": "F5fheWhQ9gaok1kW",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Supervisor Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supervisor Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Supervisor Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supervisor Agent": {
+      "main": [
+        [
+          {
+            "node": "Parse Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Route": {
+      "main": [
+        [
+          {
+            "node": "Route Candidate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Candidate": {
+      "main": [
+        [
+          {
+            "node": "Skill Match Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skill Match Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skill Match Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skill Match Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Skill Match Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skill Match Agent": {
+      "main": [
+        [
+          {
+            "node": "Parse Match Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Match Score": {
+      "main": [
+        [
+          {
+            "node": "Check Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Score": {
+      "main": [
+        [
+          {
+            "node": "Save Pending Candidate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Save Rejected Candidate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Rejected Candidate": {
+      "main": [
+        [
+          {
+            "node": "Rejected Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Pending Candidate": {
+      "main": [
+        [
+          {
+            "node": "Request Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Decision": {
+      "main": [
+        [
+          {
+            "node": "Send Interview Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Not Selected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Interview Email": {
+      "main": [
+        [
+          {
+            "node": "Mark Interview Invited",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Interview Invited": {
+      "main": [
+        [
+          {
+            "node": "Approved Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Not Selected": {
+      "main": [
+        [
+          {
+            "node": "Not Selected Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request Approval": {
+      "main": [
+        [
+          {
+            "node": "Check Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "63475b65-7b36-450e-b152-6ca908c549ea",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "8de48fd8bab4d8303aced0753829a7348e2021001c499afd35e0126724b9890c"
+  },
+  "nodeGroups": [],
+  "id": "OGfsnSpvpzPDyeju",
+  "tags": []
+}
